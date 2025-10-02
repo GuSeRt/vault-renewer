@@ -20,3 +20,4 @@ class Config:
     zulip_api_key: str | None = os.getenv("ZULIP_API_KEY")
     zulip_to: str | None = os.getenv("ZULIP_TO")       # "a@b" или "a@b,c@d"
     zulip_topic: str = os.getenv("ZULIP_TOPIC", "Vault token maintenance")
+
