@@ -35,7 +35,7 @@ class Maintainer:
             raise RuntimeError(f"empty token file: {self.cfg.token_file}")
         try:
             data = self.vault.lookup_self(t)
-            self.m.USING_FALLBACK.set(0)
+            self.m.set_fallback(False)
             return t, data
         except Exception as e:
             jlog("error", "primary_lookup_failed", error=str(e))
@@ -47,40 +47,59 @@ class Maintainer:
             data = self.vault.lookup_self(fb)  # поднимет исключение, если тоже плохой
             _write_token(self.cfg.token_file, fb)
             self.m.SWITCH_FB.inc()
-            self.m.USING_FALLBACK.set(1)
+            self.m.set_fallback(True)
             self._notify("Переключился на резервный Vault-токен.")
             return fb, data
 
     def check_and_renew(self):
-        self.m.LAST_CHECK.set(time.time())
-        token, info = self._ensure_valid_token()
+        now = time.time()
+        self.m.LAST_CHECK.set(now)
+    
+        # lookup + возможное переключение на fallback
+        try:
+            token, info = self._ensure_valid_token()
+        except Exception as e:
+            self.m.LAST_ERROR.set(time.time())
+            self.m.status_error()
+            self._notify(f"Критическая ошибка обслуживания токена: {e}")
+            jlog("error", "lookup_failed", error=str(e))
+            return
+    
         ttl = int(info.get("ttl", 0))
         self.m.TTL.set(ttl)
-        jlog("info", "lookup_ok", ttl=ttl, renewable=info.get("renewable", False))
-
+        
         if not info.get("renewable", False):
-            self.m.LAST_ERR.set(time.time())
+            self.m.LAST_ERROR.set(time.time())
+            self.m.status_non_renewable()
             self._notify("Токен не возобновляем. Требуется вмешательство.")
             return
-
+    
+        # Рано продлевать — всё ок
         if ttl > self.cfg.renew_before_sec:
-            self.m.LAST_OK.set(time.time())
+            self.m.LAST_SUCCESS.set(time.time())
+            self.m.status_ok()
             return
-
+    
+            # Пора продлевать
         self.m.RENEW_ATTEMPTS.inc()
         try:
             self.vault.renew_self(token, self.cfg.renew_increment_sec)
             ttl2 = int(self.vault.lookup_self(token).get("ttl", ttl))
             self.m.TTL.set(ttl2)
             self.m.RENEW_SUCCESS.inc()
-            self.m.LAST_OK.set(time.time())
+            t = time.time()
+            self.m.LAST_SUCCESS.set(t)
+            self.m.LAST_RENEW.set(t)
+            self.m.status_renewed()
             self._notify(f"Продлил Vault-токен. Новый TTL ≈ {ttl2} с.")
             jlog("info", "renew_ok", new_ttl=ttl2)
         except Exception as e:
             self.m.RENEW_FAIL.inc()
-            self.m.LAST_ERR.set(time.time())
+            self.m.LAST_ERROR.set(time.time())
+            self.m.status_error()
             self._notify(f"Ошибка продления токена: {e}")
             jlog("error", "renew_failed", error=str(e))
+
 
     def run_loop(self):
         running = True
