@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+import argparse
+from app.config import Config
+from app.metrics import Metrics
+from app.maintainer import Maintainer
+from app.jsonlog import jlog
+
+def main():
+    p = argparse.ArgumentParser(description="Vault token renewer with Prometheus /metrics")
+    p.add_argument("--once", action="store_true", help="Однократная проверка и выход")
+    args = p.parse_args()
+
+    cfg = Config()
+    m = Metrics(cfg.metrics_port)
+    svc = Maintainer(cfg, m)
+
+    if args.once:
+        svc.check_and_renew()
+    else:
+        svc.run_loop()
+
+if __name__ == "__main__":
+    main()
